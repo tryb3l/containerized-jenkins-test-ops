@@ -6,7 +6,7 @@ RUN apk update && \
     apk add --no-cache \
     git \
     wget \
-    openjdk11 \
+    openjdk21 \
     sudo
 
 # Create Jenkins user
