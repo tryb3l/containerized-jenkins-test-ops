@@ -4,7 +4,7 @@ LABEL maintainer="bogdan.trybel@gmail.com"
 # Install required packages
 RUN apk update && \
     apk add --no-cache \
-    openjdk17-jre \
+    openjdk21 \
     wget \
     zip \
     unzip \
@@ -14,7 +14,9 @@ RUN apk update && \
     tini \
     bash \
     fontconfig \
-    ttf-dejavu
+    ttf-dejavu \
+    nodejs \
+    python3
 
 # Create Jenkins user and group
 RUN addgroup -g 1000 jenkins && \
