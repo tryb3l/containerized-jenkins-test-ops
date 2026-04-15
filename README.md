@@ -1,12 +1,13 @@
 # Containerized Jenkins Test Ops
 
-This project sets up a Jenkins environment using Docker containers. It includes a Jenkins master, Jenkins slave, NGINX as a reverse proxy, and a proxy service. The environment is designed to simplify the process of setting up and managing Jenkins for testing operations. The Jenkins master is pre-configured with plugins and jobs for testing environments. The NGINX proxy is used to route requests to the Jenkins master and slave nodes. The proxy service is used to manage the NGINX configuration and reload the configuration when changes are made. The project includes a Makefile with targets for building, running, and stopping the Docker containers. The project is intended to be used as a starting point for setting up a Jenkins environment for testing operations. Each project use case is different, so you may need to customize the configuration to fit your needs. In order to decrease resourse usage, each container is built with a minimalistic image, based on [Alpine Linux](https://alpinelinux.org/).
+This project provides a containerized Jenkins setup for test operations. It is composed of Docker images for a Jenkins master, a Jenkins agent image, an NGINX reverse proxy, and a lightweight Docker socket proxy. The runtime stack is orchestrated with Docker Compose and helper `make` targets. To keep resource usage low, each image is based on [Alpine Linux](https://alpinelinux.org/).
 
 ## Table of Contents
 
 - Prerequisites
 - Installation
 - Usage
+- Project Shape
 - Folder Structure
 - Makefile Targets
 - Additional Information
@@ -49,44 +50,36 @@ make clean-data
 make clean-images
 ```
 
+## Project Shape
+
+The current repository is organized around four container roles:
+
+- `master`: the primary Jenkins controller, exposed on ports `8080` and `50000`
+- `nginx`: a reverse proxy that exposes port `80` and forwards web traffic to Jenkins
+- `slave`: a Jenkins agent image that can be built and reused for worker nodes
+- `proxy`: a `socat`-based Docker socket bridge that exposes Docker on TCP port `2375`
+
+At runtime, `docker-compose.yml` wires the `master`, `nginx`, and `proxy` services onto the shared `jenkins-net` network and persists Jenkins state with the `jenkins-data` and `jenkins-log` volumes.
+
 ## Folder Structure
 
-- `jenkins-master/`: Contains the Dockerfile and configuration files for the Jenkins master node.
-
-  - `Dockerfile`: Builds the Jenkins master image with required plugins.
-  - `initagent.groovy`: Groovy script to initialize Jenkins agents.
-  - `jenkins.sh`: Startup script for the Jenkins master.
-  - `plugins.txt`: List of Jenkins plugins to install.
-  - `jobs/`: Contains Jenkins job configurations.
-    - `BasicEnvTest/config.xml`: Configuration for the "BasicEnvTest" job.
-
-- `jenkins-slave/`: Contains the Dockerfile and files for the Jenkins slave node.
-
-  - `Dockerfile`: Builds the Jenkins slave image.
-  - `files/`: Additional files needed for the slave.
-    - `resolv.conf`: DNS resolver configuration.
-
-- `jenkins-nginx/`: Contains the Dockerfile and NGINX configuration files.
-
-  - `Dockerfile`: Builds the NGINX image for proxying requests to Jenkins.
-  - `conf/`: NGINX configuration directory.
-    - `nginx.conf`: Main NGINX configuration.
-    - `jenkins.conf`: NGINX site configuration for Jenkins.
-
-- `proxy/`: Contains the Dockerfile and configurations for the proxy service.
-
-  - `Dockerfile`: Builds the proxy image.
-
-- `docker-compose.yml`: Defines services, networks, and volumes for Docker Compose.
--
-
-makefile
-
-## : Contains make targets for managing the Docker environment.
-
-README.md
-
-: Project documentation.
+- `docker-compose.yml`: defines the service topology, exposed ports, network, and named volumes.
+- `makefile`: wraps the main Docker Compose workflows for build, run, stop, cleanup, and log inspection.
+- `jenkins-master/`: Jenkins controller image and bootstrap assets.
+  - `Dockerfile`: builds the Jenkins master image on Alpine with OpenJDK 21 and supporting tools.
+  - `initagent.groovy`: sets the JNLP agent port from environment on startup.
+  - `jenkins.sh`: starts Jenkins under `tini`.
+  - `jobs/`: seeded Jenkins job definitions.
+- `jenkins-slave/`: Jenkins agent image definition.
+  - `Dockerfile`: installs the agent runtime dependencies.
+  - `files/resolv.conf`: DNS resolver configuration copied into the image.
+- `jenkins-nginx/`: reverse proxy image and NGINX configuration.
+  - `Dockerfile`: builds the NGINX container.
+  - `conf/nginx.conf`: global NGINX configuration.
+  - `conf/jenkins.conf`: site configuration that proxies traffic to Jenkins.
+- `proxy/`: Docker socket proxy image.
+  - `Dockerfile`: starts `socat` to bridge `/var/run/docker.sock` to TCP port `2375`.
+- `README.md`: project documentation and operational overview.
 
 ## Makefile Targets
 
