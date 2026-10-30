@@ -1,0 +1,78 @@
+jenkins:
+  systemMessage: "Containerized Jenkins TestOps — Declarative JCasC Controller (Node.js 26 LTS node-caged & .NET 10.0 Build Agents)\n"
+  numExecutors: 0
+  mode: NORMAL
+  quietPeriod: 2
+  scmCheckoutRetryCount: 2
+  slaveAgentPort: 50000
+  securityRealm:
+    local:
+      allowsSignup: false
+      users:
+        - id: "${JENKINS_ADMIN_ID:-admin}"
+          password: "${JENKINS_ADMIN_PASSWORD:-admin}"
+  authorizationStrategy:
+    loggedInUsersCanDoAnything:
+      allowAnonymousRead: false
+  clouds:
+    - docker:
+        name: "docker"
+        dockerApi:
+          dockerHost:
+            uri: "${DOCKER_HOST_URI:-tcp://proxy1:2375}"
+          connectTimeout: 60
+          readTimeout: 60
+        containerCap: 4
+        templates:
+          - name: "agent-node"
+            labelString: "node nodejs node26 node-caged"
+            mode: EXCLUSIVE
+            remoteFs: "/home/jenkins"
+            instanceCapStr: "2"
+            retentionStrategy:
+              idleMinutes: 5
+            connector:
+              attach:
+                user: "jenkins"
+            pullStrategy: PULL_NEVER
+            removeVolumes: true
+            dockerTemplateBase:
+              image: "jenkins-agent-node:latest"
+              network: "jenkins_jenkins-net"
+              extraHosts:
+                - "host.docker.internal:host-gateway"
+              environmentsString: |
+                DOCKER_HOST=tcp://proxy1:2375
+                TESTCONTAINERS_HOST_OVERRIDE=host.docker.internal
+                TESTCONTAINERS_RYUK_DISABLED=true
+          - name: "agent-dotnet"
+            labelString: "dotnet csharp net10"
+            mode: EXCLUSIVE
+            remoteFs: "/home/jenkins"
+            instanceCapStr: "2"
+            retentionStrategy:
+              idleMinutes: 5
+            connector:
+              attach:
+                user: "jenkins"
+            pullStrategy: PULL_NEVER
+            removeVolumes: true
+            dockerTemplateBase:
+              image: "jenkins-agent-dotnet:latest"
+              network: "jenkins_jenkins-net"
+              extraHosts:
+                - "host.docker.internal:host-gateway"
+              environmentsString: |
+                DOCKER_HOST=tcp://proxy1:2375
+                TESTCONTAINERS_HOST_OVERRIDE=host.docker.internal
+                TESTCONTAINERS_RYUK_DISABLED=true
+
+unclassified:
+  location:
+    url: "${JENKINS_URL:-https://localhost/}"
+    adminAddress: "admin@localhost"
+  prometheusConfiguration:
+    collectDiskUsage: false
+    defaultNamespace: "jenkins"
+    path: "prometheus"
+    useAuthenticatedEndpoint: false

@@ -1,49 +1,15 @@
-FROM alpine:latest
+FROM jenkins/jenkins:lts-alpine-jdk25
 
-# Install required packages
-RUN apk update && \
-    apk add --no-cache \
-    openjdk21 \
-    wget \
-    zip \
-    unzip \
-    git \
-    dos2unix \
-    curl \
-    tini \
-    bash \
-    fontconfig \
-    ttf-dejavu \
-    nodejs \
-    python3
+ENV JAVA_OPTS="-Djenkins.install.runSetupWizard=false -Djava.awt.headless=true" \
+    CASC_JENKINS_CONFIG=/usr/share/jenkins/ref/casc.yaml
 
-# Create Jenkins user and group
-RUN addgroup -g 1000 jenkins && \
-    adduser -D -h "/var/jenkins_home" -u 1000 -G jenkins -s /bin/sh jenkins
+USER root
+RUN mkdir -p /var/log/jenkins && chown -R jenkins:jenkins /var/log/jenkins
 
-# Create the /usr/share/jenkins/ref/ directory
-RUN mkdir -p /usr/share/jenkins/ref/
-
-# Download Jenkins WAR file
-RUN mkdir -p /usr/share/jenkins && \
-    wget -q -O /usr/share/jenkins/jenkins.war http://mirrors.jenkins.io/war-stable/latest/jenkins.war
-
-# Copy Jenkins files and set permissions
-COPY jenkinsexport.tar.gz /tmp/jenkinsexport.tar.gz
-COPY jenkinsdefaultsecrets.tar.gz /tmp/jenkinsdefaultsecrets.tar.gz
-COPY jobs /var/jenkins_home/jobs
-RUN tar -xvf /tmp/jenkinsexport.tar.gz && \
-    tar -xvf /tmp/jenkinsdefaultsecrets.tar.gz && \
-    rm /tmp/jenkinsexport.tar.gz && \
-    rm /tmp/jenkinsdefaultsecrets.tar.gz && \
-    chown -R jenkins:jenkins /var/jenkins_home
-
-# Copy the jenkins.sh script to the correct location
-COPY jenkins.sh /usr/local/bin/jenkins.sh
-RUN chmod +x /usr/local/bin/jenkins.sh
-
-# Switch to the Jenkins user
 USER jenkins
 
-# Set the entry point
-ENTRYPOINT ["/sbin/tini", "--", "/usr/local/bin/jenkins.sh"]
+COPY --chown=jenkins:jenkins plugins.txt /usr/share/jenkins/ref/plugins.txt
+RUN jenkins-plugin-cli --plugin-file /usr/share/jenkins/ref/plugins.txt
+
+COPY --chown=jenkins:jenkins casc.yaml /usr/share/jenkins/ref/casc.yaml
+COPY --chown=jenkins:jenkins jobs /usr/share/jenkins/ref/jobs
