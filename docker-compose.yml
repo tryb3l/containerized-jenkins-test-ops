@@ -1,26 +1,168 @@
 services:
-  master:
+  controller:
     build: ./jenkins-master
     ports:
-      - "8080:8080"
-      - "50000:50000"
+      - "127.0.0.1:8080:8080"
+      - "127.0.0.1:50000:50000"
+    environment:
+      - JENKINS_ADMIN_ID=${JENKINS_ADMIN_ID:-admin}
+      - JENKINS_ADMIN_PASSWORD=${JENKINS_ADMIN_PASSWORD:-admin}
+      - JENKINS_URL=${JENKINS_URL:-https://localhost/}
+      - DOCKER_HOST_URI=tcp://proxy1:2375
+      - COLLECTING_METRICS_PERIOD_IN_SECONDS=10
     volumes:
       - jenkins-log:/var/log/jenkins
       - jenkins-data:/var/jenkins_home
+    depends_on:
+      proxy:
+        condition: service_healthy
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "curl -fsS http://localhost:8080/login >/dev/null || exit 1",
+        ]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 20s
     networks:
       - jenkins-net
   nginx:
     build: ./jenkins-nginx
     ports:
       - "80:80"
+      - "443:443"
+    volumes:
+      - ./jenkins-nginx/certs:/etc/nginx/certs
+    depends_on:
+      controller:
+        condition: service_healthy
+      grafana:
+        condition: service_healthy
+    healthcheck:
+      test:
+        ["CMD-SHELL", "curl -fsS http://localhost/healthz >/dev/null || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
     networks:
       - jenkins-net
-  slave:
-    build: ./jenkins-slave
+  prometheus:
+    image: prom/prometheus:v3
+    command:
+      - "--config.file=/etc/prometheus/prometheus.yml"
+      - "--storage.tsdb.path=/prometheus"
+      - "--storage.tsdb.retention.time=7d"
+      - "--web.enable-lifecycle"
+    ports:
+      - "127.0.0.1:9090:9090"
+    volumes:
+      - ./observability/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus-data:/prometheus
+    depends_on:
+      controller:
+        condition: service_healthy
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "wget -q -O - http://localhost:9090/-/healthy >/dev/null || exit 1",
+        ]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - jenkins-net
+  grafana:
+    build: ./observability/grafana
+    image: jenkins-grafana-slim:latest
+    mem_limit: 192m
+    ports:
+      - "127.0.0.1:3000:3000"
+    environment:
+      - GF_SECURITY_ADMIN_USER=${JENKINS_ADMIN_ID:-admin}
+      - GF_SECURITY_ADMIN_PASSWORD=${JENKINS_ADMIN_PASSWORD:-admin}
+      - GF_USERS_ALLOW_SIGN_UP=false
+      - GF_SERVER_ROOT_URL=${GRAFANA_ROOT_URL:-https://localhost/grafana/}
+      - GF_SERVER_SERVE_FROM_SUB_PATH=true
+      - GF_SECURITY_CSRF_TRUSTED_ORIGINS=localhost,localhost:3000,localhost:80,localhost:443
+    volumes:
+      - ./observability/grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./observability/grafana/dashboards:/var/lib/grafana/dashboards:ro
+      - grafana-data:/var/lib/grafana
+    depends_on:
+      prometheus:
+        condition: service_healthy
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "wget -q -O - http://localhost:3000/api/health >/dev/null || exit 1",
+        ]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    networks:
+      - jenkins-net
+  agent-node:
+    image: jenkins-agent-node:latest
+    build:
+      context: .
+      dockerfile: ./jenkins-agent-node/Dockerfile
+      args:
+        NODE_IMAGE: ${NODE_IMAGE:-platformatic/node-caged:26-alpine}
+    healthcheck:
+      test: ["CMD-SHELL", "node --version && java -version"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+    networks:
+      - jenkins-net
+    profiles:
+      - build-only
+  agent-dotnet:
+    image: jenkins-agent-dotnet:latest
+    build:
+      context: .
+      dockerfile: ./jenkins-agent-dotnet/Dockerfile
+      args:
+        DOTNET_IMAGE: ${DOTNET_IMAGE:-mcr.microsoft.com/dotnet/sdk:10.0-alpine}
+    healthcheck:
+      test: ["CMD-SHELL", "dotnet --version && java -version"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+    networks:
+      - jenkins-net
+    profiles:
+      - build-only
   proxy:
     build: ./proxy
+    environment:
+      - CONTAINERS=1
+      - IMAGES=1
+      - NETWORKS=1
+      - INFO=1
+      - VERSION=1
+      - PING=1
+      - EVENTS=1
+      - EXEC=1
+      - POST=1
+      - ALLOW_START=1
+      - ALLOW_STOP=1
+      - ALLOW_RESTARTS=1
     volumes:
-      - /var/run/docker.sock:/var/run/docker.sock
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "wget -q -O - http://127.0.0.1:2375/_ping | grep -q OK || exit 1",
+        ]
+      interval: 10s
+      timeout: 5s
+      retries: 5
     networks:
       jenkins-net:
         aliases:
@@ -28,5 +170,7 @@ services:
 volumes:
   jenkins-data:
   jenkins-log:
+  prometheus-data:
+  grafana-data:
 networks:
   jenkins-net:

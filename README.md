@@ -1,103 +1,73 @@
-# Containerized Jenkins Test Ops
+# Ephemeral Jenkins Lab
 
-This project sets up a Jenkins environment using Docker containers. It includes a Jenkins master, Jenkins slave, NGINX as a reverse proxy, and a proxy service. The environment is designed to simplify the process of setting up and managing Jenkins for testing operations. The Jenkins master is pre-configured with plugins and jobs for testing environments. The NGINX proxy is used to route requests to the Jenkins master and slave nodes. The proxy service is used to manage the NGINX configuration and reload the configuration when changes are made. The project includes a Makefile with targets for building, running, and stopping the Docker containers. The project is intended to be used as a starting point for setting up a Jenkins environment for testing operations. Each project use case is different, so you may need to customize the configuration to fit your needs. In order to decrease resourse usage, each container is built with a minimalistic image, based on [Alpine Linux](https://alpinelinux.org/).
+Local Docker Compose environment for running Jenkins pipelines on ephemeral Alpine Build Agents with NGINX HTTPS termination, Prometheus metrics, and a pre-provisioned Grafana dashboard.
 
-## Table of Contents
+## Stack
 
-- Prerequisites
-- Installation
-- Usage
-- Folder Structure
-- Makefile Targets
-- Additional Information
-- Contributing
-- License
+| Module                                              | Image / Base                               | Purpose                                                                                                                                        |
+| :-------------------------------------------------- | :----------------------------------------- | :--------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Ingress Proxy** (`nginx`)                         | `alpine:3.21` + NGINX                      | Terminates TLS on `:443`, redirects `:80` → HTTPS, rate-limits `/login` and webhooks (`429`), routes `/` to Jenkins and `/grafana/` to Grafana |
+| **Controller** (`controller`)                       | `jenkins/jenkins:lts-alpine-jdk25`         | Zero-executor controller configured via JCasC (`casc.yaml`) and `jenkins-plugin-cli`                                                           |
+| **Node.js Build Agent** (`agent-node`)              | `platformatic/node-caged:26-alpine`        | Ephemeral Node.js 26 LTS agent with V8 pointer compression (~50% lower heap), OpenJDK 25 JRE, and `docker-cli`                                 |
+| **C# / .NET Build Agent** (`agent-dotnet`)          | `mcr.microsoft.com/dotnet/sdk:10.0-alpine` | Ephemeral .NET 10.0 SDK agent with OpenJDK 25 JRE and `docker-cli`                                                                             |
+| **Socket Proxy** (`proxy`)                          | `tecnativa/docker-socket-proxy:v0.5.0`     | Restricts Docker socket API on `tcp://proxy1:2375` (blocks privileged containers, host volumes, and Swarm/system mutations)                    |
+| **Telemetry & Dashboard** (`prometheus`, `grafana`) | `prom/prometheus:v3` + slim Alpine Grafana | Scrapes `/prometheus/` every 10s and provisions the `jenkins-testops` dashboard (`GOMEMLIMIT=96MiB`)                                           |
+
+Both Build Agents attach to `jenkins_jenkins-net` with `DOCKER_HOST=tcp://proxy1:2375` so pipelines and **Testcontainers** can launch ephemeral database sidecars (such as `postgres:18-alpine` or `mongo:7`) on demand.
 
 ## Prerequisites
 
-- Docker installed on your system
-- Docker Compose installed
+- Docker and Docker Compose v2 (`docker compose`)
+- `mkcert` _(optional — automatically generates browser-trusted local HTTPS certificates; falls back to `openssl` self-signed certificates)_
 
-## Installation
-
-Clone the repository:
+## Quick Start
 
 ```sh
-git clone https://github.com/yourusername/containerized-jenkins-test-ops.git
+git clone https://github.com/tryb3l/containerized-jenkins-test-ops.git
 cd containerized-jenkins-test-ops
-```
 
-## Usage
-
-To build and run the Docker containers, use the following commands:
-
-```sh
 make build
 make run
+make verify
 ```
 
-To stop the containers:
+### Endpoints & Default Credentials
 
-```sh
-make stop
+- **Jenkins Controller:** `https://localhost/` (HTTP `:80` redirects to HTTPS)
+- **Grafana Dashboard:** `https://localhost/grafana/d/jenkins-testops`
+- **Prometheus Targets:** `http://127.0.0.1:9090/targets`
+- **Default login (Jenkins & Grafana):** `admin` / `admin` _(override via `JENKINS_ADMIN_ID` and `JENKINS_ADMIN_PASSWORD`)_
+
+## Make Targets
+
+| Command             | Action                                                                                                                                                                 |
+| :------------------ | :--------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `make certs`        | Generates `localhost` TLS certificates in `jenkins-nginx/certs/` via `mkcert` (or `openssl` fallback)                                                                  |
+| `make build`        | Generates certificates and builds the Controller, Ingress Proxy, Socket Proxy, slim Grafana, and Build Agent images                                                    |
+| `make run`          | Builds any missing agent images and starts the stack in detached mode with healthcheck ordering                                                                        |
+| `make verify`       | Verifies HTTPS routing, anonymous lock (`403`), form login, `/login` rate limiting (`429`), Prometheus scraping, Grafana provisioning, and the `BasicEnvTest` pipeline |
+| `make ps`           | Lists running containers and health statuses                                                                                                                           |
+| `make jenkins-log`  | Follows the Jenkins Controller logs                                                                                                                                    |
+| `make stop`         | Stops and removes containers                                                                                                                                           |
+| `make clean-data`   | Stops containers and removes volumes and networks                                                                                                                      |
+| `make clean-images` | Prunes dangling Docker images                                                                                                                                          |
+
+## Repository Layout
+
+```text
+├── docker-compose.yml          # Compose v2 topology, healthchecks, and localhost-bound debug ports
+├── makefile                    # Build, lifecycle, and verification targets
+├── GLOSSARY.md                 # Canonical domain terms
+├── docs/adr/                   # Architectural Decision Records
+├── jenkins-master/             # Controller Dockerfile, casc.yaml, plugins.txt, and BasicEnvTest seed job
+├── jenkins-agent-node/         # Ephemeral Node.js 26 LTS (node-caged) Build Agent Dockerfile
+├── jenkins-agent-dotnet/       # Ephemeral C# / .NET 10.0 SDK Build Agent Dockerfile
+├── jenkins-nginx/              # NGINX Ingress Proxy Dockerfile, nginx.conf, and jenkins.conf
+├── observability/              # Prometheus config, slim Grafana Dockerfile, and provisioned dashboards
+├── proxy/                      # Restricted Docker Socket Proxy Dockerfile
+└── scripts/                    # setup-agent.sh, generate-certs.sh, and verify.sh
 ```
-
-To clean up the containers and remove volumes:
-
-```sh
-make clean-data
-make clean-images
-```
-
-## Folder Structure
-
-- `jenkins-master/`: Contains the Dockerfile and configuration files for the Jenkins master node.
-
-  - `Dockerfile`: Builds the Jenkins master image with required plugins.
-  - `initagent.groovy`: Groovy script to initialize Jenkins agents.
-  - `jenkins.sh`: Startup script for the Jenkins master.
-  - `plugins.txt`: List of Jenkins plugins to install.
-  - `jobs/`: Contains Jenkins job configurations.
-    - `BasicEnvTest/config.xml`: Configuration for the "BasicEnvTest" job.
-
-- `jenkins-slave/`: Contains the Dockerfile and files for the Jenkins slave node.
-
-  - `Dockerfile`: Builds the Jenkins slave image.
-  - `files/`: Additional files needed for the slave.
-    - `resolv.conf`: DNS resolver configuration.
-
-- `jenkins-nginx/`: Contains the Dockerfile and NGINX configuration files.
-
-  - `Dockerfile`: Builds the NGINX image for proxying requests to Jenkins.
-  - `conf/`: NGINX configuration directory.
-    - `nginx.conf`: Main NGINX configuration.
-    - `jenkins.conf`: NGINX site configuration for Jenkins.
-
-- `proxy/`: Contains the Dockerfile and configurations for the proxy service.
-
-  - `Dockerfile`: Builds the proxy image.
-
-- `docker-compose.yml`: Defines services, networks, and volumes for Docker Compose.
--
-
-makefile
-
-## : Contains make targets for managing the Docker environment.
-
-README.md
-
-: Project documentation.
-
-## Makefile Targets
-
-- `make build`: Builds the Docker images using Docker Compose.
-- `make run`: Runs the Jenkins master, NGINX, and proxy containers in detached mode.
-- `make stop`: Stops and removes the containers.
-- `make clean-data`: Stops containers and removes containers, networks, volumes, and images created by [up].
-- `make clean-images`: Removes dangling Docker images to free up space.
-- `make ps`: Lists containers managed by Docker Compose.
-- `make jenkins-log`: Tails the Jenkins master log for debugging.
 
 ## License
 
-This project is licensed under the MIT License.
+MIT
