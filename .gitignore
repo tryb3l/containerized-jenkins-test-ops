@@ -1,1 +1,4 @@
-
+jenkins-nginx/certs/*.crt
+jenkins-nginx/certs/*.key
+jenkins-nginx/certs/*.pem
+.DS_Store
