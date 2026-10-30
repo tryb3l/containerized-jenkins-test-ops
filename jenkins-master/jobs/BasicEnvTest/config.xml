@@ -1,13 +1,13 @@
 <?xml version='1.0' encoding='UTF-8'?>
-<flow-definition plugin="workflow-job@2.10">
+<flow-definition plugin="workflow-job">
   <actions/>
-  <description></description>
+  <description>Seed pipeline verifying ephemeral Node.js 26 LTS (Platformatic node-caged) and C# / .NET 10.0 Build Agent adapters.</description>
   <keepDependencies>false</keepDependencies>
   <properties>
     <jenkins.model.BuildDiscarderProperty>
       <strategy class="hudson.tasks.LogRotator">
         <daysToKeep>-1</daysToKeep>
-        <numToKeep>1</numToKeep>
+        <numToKeep>5</numToKeep>
         <artifactDaysToKeep>-1</artifactDaysToKeep>
         <artifactNumToKeep>-1</artifactNumToKeep>
       </strategy>
@@ -17,14 +17,33 @@
       <triggers/>
     </org.jenkinsci.plugins.workflow.job.properties.PipelineTriggersJobProperty>
   </properties>
-  <definition class="org.jenkinsci.plugins.workflow.cps.CpsFlowDefinition" plugin="workflow-cps@2.29">
-    <script>// A Simple test to make sure you can spin up slaves!
-stage (&apos;Default Slave&apos;) {
-    node (&apos;testslave&apos;) {
-        sh &apos;echo &quot;You have spun up a basic slave!&quot;&apos;
+  <definition class="org.jenkinsci.plugins.workflow.cps.CpsFlowDefinition" plugin="workflow-cps">
+    <script>// Verify both ephemeral Build Agent adapters across the Socket Proxy seam
+stage(&apos;Node.js 26 LTS (node-caged) Build Agent&apos;) {
+    node(&apos;node26&apos;) {
+        sh &apos;&apos;&apos;
+            echo &quot;=== Node.js Build Agent ===&quot;
+            java -version
+            node --version
+            npm --version
+            node -e &quot;console.log(&apos;V8 heap limit (MB):&apos;, Math.round(require(&apos;v8&apos;).getHeapStatistics().heap_size_limit / 1024 / 1024))&quot;
+        &apos;&apos;&apos;
     }
 }
 
+stage(&apos;C# / .NET 10 SDK Build Agent&apos;) {
+    node(&apos;net10&apos;) {
+        sh &apos;&apos;&apos;
+            echo &quot;=== .NET SDK Build Agent ===&quot;
+            java -version
+            dotnet --version
+            dotnet --list-sdks
+            echo &quot;=== Ephemeral DB Sidecar / Testcontainers Readiness (via proxy1:2375) ===&quot;
+            docker version --format &apos;Client: {{.Client.Version}} / Server: {{.Server.Version}}&apos;
+            docker run --rm --network jenkins_jenkins-net postgres:18-alpine postgres --version
+        &apos;&apos;&apos;
+    }
+}
 </script>
     <sandbox>true</sandbox>
   </definition>
